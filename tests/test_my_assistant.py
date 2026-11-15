@@ -1,75 +1,77 @@
 # test_my_assistant.py
 # Author: Alyxandria Gibson
 
-
-from mock_model import MockModel
+from fake_model import FakeModel
+from keyword_model import KeywordModel
 from my_assistant import FAQAssistant
+from my_queue import WarrantyQueue
 from my_tool import FAQKnowledgeBase
+from my_toolbox import FAQToolbox
 
 
 class SilentModel:
     """A model that never has an answer. It stands in for Ollama being switched off."""
 
-    def reply(self, instructions, history):
+    def decide(self, instructions, history, tools):
         return None
 
 
-def make_assistant():
-    """Create a new assistant instance for testing."""
-    faq_data = {
-        "store hours": "We are open from 9 AM - 5 PM, Monday through Friday.",
-        "shipping": "3-5 business days.",
-        "policy": "We offer a 1-year warranty on all products.",
-    }
-    tool = FAQKnowledgeBase(faq_data)
-    return FAQAssistant(
-        "Bizzy", "Clearly answer and assist with FAQs.", tool, MockModel()
+def make_assistant(model):
+    faq_tool = FAQKnowledgeBase(
+        {"hours": "9 am to 5 pm", "shipping": "3-5 business days"}
     )
+    tools = FAQToolbox(faq_tool, WarrantyQueue(faq_tool))
+    return FAQAssistant("Bizzy", "Be clear.", tools, model)
 
 
-def test_faq_questions_uses_tool():
-    assistant = make_assistant()
-    reply = assistant.respond("What are your store hours?")
-    assert "We are open from 9 AM - 5 PM, Monday through Friday." in reply
+def claim(item, customer):
+    """Build the decision a model returns when it wants to request a warranty claim."""
+    arguments = {"item": item, "customer": customer}
+    return {"tool": "request_warranty_claim", "arguments": arguments}
 
 
-def test_faq_policy_question_uses_tool():
-    assistant = make_assistant()
-    reply = assistant.respond("What is your store policy?")
-    assert "1-year warranty" in reply
-
-
-def test_unknown_questions_go_to_model():
-    assistant = make_assistant()
-    reply = assistant.respond("What is your favorite color?")
-    assert "I'm not sure how to help you with that." in reply
-
-
-def test_human_handoff_for_sensitive_topics():
-    assistant = make_assistant()
-    reply = assistant.respond("I want a refund for my order.")
-    assert (
-        "Financial and return requests require a human agent. I am routing you to customer support."
-        in reply
+def test_model_can_ask_for_faq():
+    model = FakeModel(
+        [
+            {"tool": "look_up_faq", "arguments": {"topic": "hours"}},
+            {"text": "We are open 9 am to 5 pm."},
+        ]
     )
+    assistant = make_assistant(model)
+    assistant.respond("What are your hours?")
+    assert assistant.history[1]["content"] == "9 am to 5 pm"
 
 
-def test_unknown_request_gets_safe_fallback():
-    faq_data = {"store hours": "We are open from 9 AM - 5 PM, Monday through Friday."}
-    tool = FAQKnowledgeBase(faq_data)
-    assistant = FAQAssistant(
-        "Bizzy", "Clearly answer and assist with FAQs.", tool, SilentModel()
-    )
-    assert "try again" in assistant.respond("What is the meaning of life?")
+def test_warranty_claim_waits_for_staff():
+    model = FakeModel([claim("rain jacket", "Luna Lopez"), {"text": "Sent."}])
+    assistant = make_assistant(model)
+    assistant.respond("Please file a warranty claim for my rain jacket for Luna Lopez")
+    assert len(assistant.tools.warranty_queue.waiting()) == 1
+    assert assistant.tools.faq_tool.warranty_claims == []
 
 
-def test_other_messages_go_to_model():
-    assistant = make_assistant()
+def test_made_up_name_is_refused():
+    model = FakeModel([claim("rain jacket", "John Doe"), {"text": "Name?"}])
+    assistant = make_assistant(model)
+    assistant.respond("Please file a warranty claim for my rain jacket")
+    assert "has not given that name" in assistant.history[1]["content"]
+    assert assistant.tools.warranty_queue.waiting() == []
+
+
+def test_approval_records_the_claim_once():
+    faq_tool = FAQKnowledgeBase({"warranty": "1-year warranty"})
+    queue = WarrantyQueue(faq_tool)
+    queue.request_warranty_claim("rain jacket", "Luna Lopez")
+    queue.approve(1)
+    queue.approve(1)
+    assert len(faq_tool.warranty_claims) == 1
+
+
+def test_cancellation_goes_to_human():
+    assistant = make_assistant(FakeModel([]))
+    assert "human agent" in assistant.respond("I want a refund for my order")
+
+
+def test_keyword_model_still_greets():
+    assistant = make_assistant(KeywordModel())
     assert assistant.respond("hello") == "Hello! How can I help you today?"
-
-
-def test_history_records_turns():
-    assistant = make_assistant()
-    assistant.respond("hello")
-    assistant.respond("What are your store hours?")
-    assert len(assistant.history) == 4

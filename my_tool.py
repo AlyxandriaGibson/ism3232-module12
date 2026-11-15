@@ -8,6 +8,7 @@ class FAQKnowledgeBase:
     def __init__(self, faq_data):
         """Store the FAQ dictionary with topic keywords to policy details."""
         self.faq_data = faq_data
+        self.warranty_claims = []
 
     def find_topic(self, text):
         """Return the first known topic found in the message text, or None."""
@@ -27,3 +28,19 @@ class FAQKnowledgeBase:
         if topic is None:
             return None
         return self.faq_data.get(topic)
+
+    def look_up_faq(self, topic):
+        """Look up the store information or policy for a specific topic.
+
+        Args:
+            topic: The topic to look up, such as hours, shipping, or warranty.
+        """
+        return self.faq_data.get(topic)
+
+    def record_warranty_claim(self, product, customer_name):
+        self.warranty_claims.append(
+            {
+                "product": product,
+                "customer": customer_name,
+            }
+        )
